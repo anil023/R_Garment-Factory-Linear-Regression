@@ -1,0 +1,795 @@
+---
+title: "Garment Factory Productivity Model"
+author: "Anil Raju"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+mainfont: "Times New Roman"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+
+# Save R file and the data set in the same directory
+# Set working directory to where the R file is saved
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+##Load Packages-------
+
+set.seed(1)
+library(ggplot2) #ggplot, geom_bar
+library(ggpubr) #ggdoghnutchart
+library(moments) #skewness
+library(extrafont) #more font types for plots
+library(graphics) # R graphics
+library(grDevices) # R graphics devices for color and fonts
+library(corrplot) #correlation plot
+library(car) #ScatterPlot Matrix,Applied Regression and Data sets
+#library(carData)
+library(leaps) #Model selection
+library(olsrr) #Cooks Distance Plot
+#library(DMwR2) #Knn Imputation
+
+#Base Packages
+library(rgl)
+library(base)
+#library(datasets)
+library(methods)
+library(stats)
+library(utils)
+
+```
+  
+  
+  
+# I. Introduction : Data and Variables
+
+The dataset utilized for this study is not owned by the author but rather borrowed from the Kaggle database for training and educational purposes. The dataset _"productivity-prediction-of-garment-employees.csv"_ contains recorded data for a specific time period, encompassing various variables and a productivity measure, representing a garment factory. As with any factory, identifying the crucial variables and their interactions that influence productivity levels holds significant value. This notebook will conduct exploratory data analysis and linear regression analysis on the dataset to construct an interpretable productivity model (not a prediction or time series model). Additionally, we will address a few questions that arise after the exploratory analysis using hypothesis testing.\
+
+actual_productivity - measures the actual productivity of each team (in percentage, but represented as a range between 0 and 1). It’s a unit less variable where value of 1 represents 100% productivity from the team. This is the **'Response Variable'** for our models. \
+
+The remaining variables are considered as predictor variables for the model. \
+Numerical Variables:  
+
+* targeted_productivity - targeted productivity set by the supervisor for each team for each day(in percentage, but recorded as a range between 0-1)
+* smv - standard time allocated for a task(in minutes)
+* wip - number of unfinished items for products(number)
+* over_time - amount of overtime allocated to each team (in minutes)
+* incentive - amount of financial incentive that enables or motivates the team(in BDT)
+* idle_time - amount of time when the production was interrupted due to several reasons(in minutes)
+* idle_men - number of workers who were idle due to production interruption(number)
+* no_of_workers - number of workers in each team(number)
+
+Categorical Variables:  
+
+* quarter - portion of the month; a month was divided into five quarters(5 levels)
+* department - associated department(2 levels)
+* day - days of the week(6 levels)
+* team - team identifier (12 levels)
+* no_of_style_change - number of changes in the style of a particular product(3 levels)
+
+Since the data is unfamiliar I have no a-priori hypothesis or questions.\
+\
+```{r}
+#Data and Variable Assignment---
+
+#converted blank spaces to NA while importing
+garwork <- read.csv('garments_worker_productivity.csv', na.strings=c(""," "))
+
+cat("\n COUNT OF NA VALUES(TRUE) IN THE DATA FRAME\n")
+summary(is.na(garwork))
+#knnImputation(garwork ,k = 10, scale = TRUE, meth = "weighAvg")
+
+```
+
+We noticed that only the 'wip' variable contains NA (missing) values, accounting for approximately 42% of the variable's data. As we cannot ascertain whether the NA cells should be treated as having a value of 0, we have decided not to alter the existing values. Imputing the missing data is not feasible due to the high count/percentage of NA values, and knnimpute functions are converting them back to NA. Therefore, it is advisable to remove the 'wip' variable from the dataset.\
+
+As we are not conducting a time series analysis with the dataset, we will exclude the 'date' variable from our analysis.\
+
+```{r}
+
+garwork <- subset(garwork, select = -c(date,wip) )
+
+cat("\n CONTENTS OF THE DATA FRAME\n")
+str(garwork) #check variable types etc
+
+```
+
+Notice the data type for the categorical variables, it doesn't have categorical data type in the data set, lets change that.
+\
+\
+\
+```{r}
+garwork$quarter <- as.factor(garwork$quarter)
+garwork$department <- as.factor(garwork$department)
+garwork$day <- as.factor(garwork$day)
+garwork$team <- as.factor(garwork$team)
+garwork$no_of_style_change <- as.factor(garwork$no_of_style_change)
+
+cat("\n CONTENTS OF THE DATA FRAME\n")
+str(garwork) #running again for verification
+
+cat("\n TOP FEW ROWS OF THE DATA FRAME\n")
+head(garwork)
+
+cat("\n SUMMARY STATISTICS FOR EACH COLUMN IN THE DATA FRAME\n")
+summary(garwork)
+```
+Note:\
+over_time,incentive, idle_time and idle_men has a very high maximum value, the mean and median are also very different - check the variables for skewness.\
+actual_productivity data ranges from 0.2 to 1.1\
+```{r}
+Y <- garwork$actual_productivity
+```
+\newpage
+
+  
+# II. Explore Categorical Variables
+
+```{r, fig.height = 3, fig.width = 6, fig.align = "center"}
+# Create a scatter plot matrix of your response and the five predictor variables
+cat("\n SCATTER PLOT MATRIX OF RESPONSE AND THE FIVE CATEGORICAL VARIABLES\n")
+scatterplotMatrix(~Y+quarter+department+day+team+no_of_style_change,garwork,smooth=FALSE)
+```
+Based on the observations from the Scatter Plot Matrix, it is evident that for most variables, there is no noticeable trend between those variables and the response variable, except for the variable "no_of_style_change." This particular variable exhibits a negative correlation with the response variable.\
+```{r}
+#GGPlot Theme for similar visual plots
+#Define theme_ggpbar() function
+theme_ggpbar <- function(){
+  font <- "Times New Roman"   #font family
+  theme_grey() %+replace%    #replace elements we want to change
+    theme(
+      #text elements
+      plot.title = element_text(colour="#616161",face = "bold",size=13, hjust = 0.5),
+      plot.subtitle = element_text(colour="#616161",size=10, hjust = 0.5),
+      axis.title = element_text(colour="#616161",face = "bold",size=10),
+      axis.text = element_text(colour="#616161",size=8)
+    )
+}
+
+```
+  
+  
+## 1. Quarter
+
+```{r, fig.height = 3, fig.width = 4, fig.align = "center"}
+#quarter
+ggplot(garwork,aes(x=reorder(quarter, quarter, function(x)-length(x)))) +
+  geom_bar(fill='red') +  
+  labs(x='Quarter:1 to 5', y='Count', title = "Frequency Distribution: Quarter", subtitle = "") +
+  geom_text(stat='count', aes(label=..count..), vjust=2) + 
+  theme_ggpbar() +
+  theme(legend.title = element_text(colour="#616161",face = "bold",size=10),
+        legend.text = element_text(colour="#616161",face = "bold",size=8))
+
+```
+A general trend observed in the above plot is that there are fewer observations recorded towards the end of the month. Additionally, there seems to be a notable difference between the number of data points in Quarter 4 of a month compared to Quarter 3. Quarter 4 appears to have more data points than Quarter 3. This observation could be significant and may require further investigation to understand the reasons behind this pattern.
+
+## 2. Department
+
+```{r, fig.height = 3, fig.width = 4, fig.align = "center"}
+#department
+ggplot(data=data.frame(Count = summary(garwork$department), Department = levels(garwork$department)), aes(x=Department, y= Count,fill = Department))+
+  geom_bar(stat="identity") +
+  geom_text(label=summary(garwork$department), vjust=2) + #shows count
+  geom_text(label=paste(round(summary(garwork$department)/sum(summary(garwork$department))*100,0),"% of Total"), vjust=4) +  #shows percentage
+  theme_ggpbar() +
+  theme(legend.title = element_blank(),
+        legend.text = element_text(colour="#616161",face = "bold",size=8),
+        legend.position = "top")+
+  ggtitle(label = "Frequency Distribution: Department",subtitle = "") #instead of using labs() as shown above
+```
+It is noted that the dataset shows an almost equal number of observations within each department.
+
+## 3. Day
+
+```{r, fig.height = 3, fig.width = 4, fig.align = "center"}
+#day
+data <- data.frame(Percent = round(summary(garwork$day)*100/sum(summary(garwork$day)),1), Day = levels(garwork$day))
+data <- as.matrix(data)
+data <- data[order(data[,1], na.last = TRUE, decreasing = TRUE),]
+data <- data.frame(data)
+data$Day <- as.factor(data$Day)
+data$Percent <- as.integer(data$Percent)
+ggplot(data, aes(x = "", y = "", fill = Day)) +
+  geom_bar(aes(x = "", y = Percent, fill = Day), width = 1, stat = "identity", color = "white") +
+  coord_polar("y") +    #makes it a pie
+  geom_text(aes(x = "", y = Percent,label = Percent), position = position_stack(vjust = 0.5)) +  #creates the label within the plot
+  labs(x = NULL, y = NULL, fill = NULL, title = "Frequency Distribution: Days(in %)") +   #creates the Plot Title
+  theme_ggpbar() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major = element_blank(),    #strip major gridlines
+        panel.grid.minor = element_blank(),    #strip minor gridlines
+        plot.title = element_text(colour="#616161",face = "bold",size=13, hjust = 0.5),
+        legend.text = element_text(colour="#616161",size=8),
+        legend.position = "top")
+```
+It has been observed that the dataset contains a very similar percentage of data from each day, except for Saturdays. This could be due to multiple reasons.
+
+## 4. Team
+
+```{r, fig.height = 3, fig.width = 4, fig.align = "center"}
+#team
+data <- data.frame(Count = summary(garwork$team), Team = levels(garwork$team))
+data <- as.matrix(data)
+data <- data[order(data[,1], na.last = TRUE, decreasing = TRUE),]
+data <- data.frame(data)
+data$Team <- as.factor(data$Team)
+data$Count <- as.integer(data$Count)
+data$ymax = cumsum(data$Count)
+data$ymin = c(0, head(data$ymax, n=-1)) # Compute the bottom of each rectangle
+# Make the Donut Plot
+ggplot(data, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=Team)) +
+  geom_rect( color = 'white') +
+  geom_text( x=3.5, aes(y=(data$ymax + data$ymin) / 2, label=Count), size=5, color='#616161') + # label for counts
+  coord_polar(theta="y") + # turns it into a pie chart
+  xlim(c(2, 4)) + #turns into donut chart
+  labs(title = "Frequency Distribution: Team")+
+  theme_ggpbar()+
+  theme(
+    #grid elements
+    panel.grid.major = element_blank(),    #strip major gridlines
+    panel.grid.minor = element_blank(),    #strip minor gridlines
+    axis.ticks = element_blank(),          #strip axis ticks
+    axis.text.y = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.title.x = element_blank(),
+    legend.title = element_text(colour="#616161",face = "bold",size=10),
+    legend.text = element_text(colour="#616161",size=8),
+  )
+```
+The dataset reveals that the number of data points collected from each team is different and appears to be randomly distributed. Team 8 and team 2 have the highest number of data points, on the other hand, team 11 and team 5 have the least data points. This discrepancy in the amount of data from each team might be a crucial aspect to consider while analyzing and interpreting the results, as it could potentially influence the outcomes of our analysis or models.  
+
+
+## 5. Number of Style Change
+
+```{r, fig.height = 3, fig.width = 4, fig.align = "center"}
+#no_of_style_change
+data <- data.frame(Count = summary(garwork$no_of_style_change), NoofChange = levels(garwork$no_of_style_change))
+ggplot(data, aes(x = "", y = Count, fill = NoofChange)) +
+  geom_bar(aes(x = "", y = Count, fill = NoofChange), width = 1, stat = "identity", color = "white") +
+  coord_polar("y") + 
+  geom_text(aes(x = "", y = Count,label = Count), position = position_stack(vjust = 0.6)) +
+  labs(x = NULL, y = NULL, fill = NULL, title = "Frequency Distribution: No. of Style Change") +
+  theme_ggpbar() +
+  theme(axis.line = element_blank(),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        panel.grid.major = element_blank(),    #strip major gridlines
+        panel.grid.minor = element_blank(),    #strip minor gridlines
+        plot.title = element_text(colour="#616161",face = "bold",size=13, hjust = 0.5),
+        legend.text = element_text(colour="#616161",size=8),
+        legend.position = "top")
+```
+It is evident that there is a substantial difference in the data distribution among the various levels in the variable. The presence of a significant imbalance in the distribution of data across different levels can have implications on the analysis and modeling process.
+\newpage
+  
+  
+  
+# III. Explore Numerical Variables
+```{r}
+NV <- subset(garwork, select = -c(quarter,department,day,team,no_of_style_change)) #subset of only numerical variables
+cat("\n SCATTER PLOT MATRIX OF YOUR RESPONSE AND THE NUMERICAL VARIABLES\n")
+pairs(NV ,main = "Scatterplot Matrix for Numerical Variables")
+cat("\n CORRELATION PLOT MATRIX OF YOUR RESPONSE AND THE NUMERICAL VARIABLES\n")
+corrplot(cor(NV), method = 'number')
+```
+From the scatter plot, there doesn't appear to be any evident correlation among the variables or with the predictor variable. However, the correlation plot reveals certain correlations between specific variables. Notably, there seems to be a correlation between "over_time," "smv," and "no_of_workers." Additionally, there appears to be a correlation between "idle_men" and "idle_time".
+
+```{r}
+cat("\n SKEWNESS VALUES FOR NUMERICAL VARIABLES\n")
+skewness(NV)
+# windowsFonts(A = windowsFont("Arial"))  # Specify font
+#par(mfrow=c(2,2))
+
+```
+The above skewness values for the data set variables indicate that we have a lot of skewed variables in our dataset.\
+\newpage
+
+
+## 1. Targeted Productivity
+```{r,  fig.show="hold", out.width="50%"}
+# targeted_productivity
+varXX <- garwork$targeted_productivity
+hist(varXX, main = "Targeted Productivity", xlab = "targeted productivity(in %)", col = "ORANGE", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Targeted Productivity", ylab = "targeted productivity(in %)", col = "ORANGE", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates highly negative skewed variable confirmed by the histogram.\
+We do have few outliers in the variable, list mentioned below:\
+`r Boxplot(varXX)`
+
+## 2. SMV
+```{r,  fig.show="hold", out.width="50%"}
+# smv
+varXX <- garwork$smv
+hist(varXX, main = "Time Allocated", xlab = "time allocated(in minutes)", col = "#809012", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Time Allocated", ylab = "time allocated(in minutes)", col = "#809012", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates slightly positive skewed variable confirmed by the histogram.\
+\newpage
+
+
+## 3. Over Time
+```{r,  fig.show="hold", out.width="50%"}
+# over_time
+varXX <- garwork$over_time
+hist(varXX, main = "Over Time", xlab = "over time allocated(in minutes)", col = "#66c9de", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Over Time", xlab = "over time allocated(in minutes)", col = "#66c9de", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates slightly positive skewed variable confirmed by the histogram.\
+We do have one outlier in the variable, mentioned below:\
+`r Boxplot(varXX)`
+
+## 4. Incentive
+```{r,  fig.show="hold", out.width="50%"}
+# incentive
+varXX <- garwork$incentive
+hist(varXX, main = "Financial Incentive", xlab = "financial incentive(in BDT)", col = "#F48FB1", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Financial Incentive", xlab = "financial incentive(in BDT)", col = "#F48FB1", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates highly positive skewed variable confirmed by the histogram.\
+We do have few outliers in the variable, list mentioned below:\
+`r Boxplot(varXX)`
+\newpage
+
+
+## 5. Idle Time
+```{r,  fig.show="hold", out.width="50%"}
+# idle_time
+varXX <- garwork$idle_time
+hist(varXX, main = "Idle Production Time", xlab = "idle production time(in minutes)", col = "#1E88E5", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Idle Production Time", xlab = "idle production time(in minutes)", col = "#1E88E5", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates highly positive skewed variable confirmed by the histogram.\
+We do have few outliers in the variable, list mentioned below:\
+`r Boxplot(varXX)`
+
+## 6. Idle Men
+```{r,  fig.show="hold", out.width="50%"}
+# idle_men
+varXX <- garwork$idle_men
+hist(varXX, main = "Idle Workers", xlab = "idle workers(number)", col = "#BA5FE7", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Idle Workers", xlab = "idle workers(number)", col = "#BA5FE7", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates highly positive skewed variable confirmed by the histogram.\
+We do have few outliers in the variable, list mentioned below:\
+`r Boxplot(varXX)`
+\newpage
+
+
+
+## 7. Number of Workers
+```{r,  fig.show="hold", out.width="50%"}
+# no_of_workers
+varXX <- garwork$no_of_workers
+hist(varXX, main = "Number of Workers", xlab = "number of workers(count)", col = "#2E7D32", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Number of Workers", xlab = "number of workers(count)", col = "#2E7D32", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates slightly negative skewed variable confirmed by the histogram.\
+We do have few outliers in the variable, list mentioned below:\
+`r Boxplot(varXX)`
+
+## 8. Actual Productivity
+```{r,  fig.show="hold", out.width="50%"}
+# actual_productivity
+varXX <- garwork$actual_productivity
+hist(varXX, main = "Actual Productivity", xlab = "actual productivity(in %)", col = "#FFD54F", cex.lab=1, cex.axis=0.9, cex.main=1.2, prob=TRUE, cex.sub = 0.7,sub = paste("Skewness = ",round(skewness(varXX),1), sep = ""))
+x <- seq(min(varXX), max(varXX), length = length(varXX))
+f <- dnorm(x, mean = mean(varXX), sd = sd(varXX))
+lines(x, f, col = "red", lwd = 2)
+
+Boxplot(varXX, main = "Actual Productivity", xlab = "actual productivity(in %)", col = "#FFD54F", cex.lab=1, cex.axis=0.9, cex.main=1.2)
+
+```
+Skewness: `r round(skewness(varXX),1)`\
+The skewness value indicates slightly negative skewed variable confirmed by the histogram.\
+We do have few outliers in the variable, list mentioned below:\
+`r Boxplot(varXX)`
+\newpage
+  
+  
+# IV. Develop Models
+
+Apart from the theoretical understanding, we will be using the adjusted R-squared (R^2^adj), p-value as the criterion for model selection, to assess the goodness of fit of different models. The adjusted R-squared accounts for the number of predictors in the model, preventing overfitting by penalizing complex models with additional variables. \
+
+Additionally, we will set a p-value threshold of 0.05 for the hypothesis tests. If the p-value obtained from a test is less than 0.05, we reject the null hypothesis in favor of the alternative hypothesis as this suggests that the observed effect or relationship is statistically significant.
+
+## Model 1: Numerical Variables
+
+First Numerical Model:
+```{r}
+## Define Base Model---
+
+# below code: scatter plot for the full model
+#scatterplotMatrix(~Y+smv+incentive+over_time+idle_time+idle_men+no_of_workers+quarter+department+day+team+no_of_style_change,garwork,smooth=FALSE)
+
+mod <- lm(Y ~ smv+over_time+incentive+idle_time+idle_men+no_of_workers, garwork) #model with only numerical variables
+summary(mod)
+```
+Performing an ANOVA (Analysis of Variance) test is a valuable way to determine whether removing variables from a model would lead to a significant reduction in the unexplained variability in the response variable. \
+
+ANOVA for Over Time:
+```{r}
+anova(update(mod, ~ . -over_time),mod) #p=0.1893; consider alpha=0.05
+```
+p- value: `r anova(update(mod, ~ . -over_time),mod)[2,6]` \
+
+ANOVA for Idle Time:
+```{r}
+mod <- update(mod, ~ . -over_time)
+anova(update(mod, ~ . -idle_time),mod) #p=0.3793
+```
+p- value: `r anova(update(mod, ~ . -idle_time),mod)[2,6]` \
+
+Since the p-values from both ANOVA tests resulted in p-value greater than 0.05, hence we updated the model by removing the two variables.\
+
+Updated Numerical Model:
+```{r}
+mod <- lm(Y ~ smv+incentive+idle_men+no_of_workers, garwork)
+summary(mod) #numerical model
+print(mod)
+```
+**R^2^adj = `r round(summary(mod)$adj.r.squared,4)` **\
+R^2^adj degrades by a tiny fraction with the optimized numerical model.
+
+\newpage
+## Model 2: Add Categorical Variables
+We could use ANOVA tests in a similar way to add categorical variables into the model. \
+
+ANOVA for Quarter:
+```{r}
+anova(mod,update(mod, ~ . +quarter)) #p=1.69e-5 
+```
+p- value: `r anova(mod,update(mod, ~ . +quarter))[2,6]` \
+Hence include the variable in the model.\
+
+ANOVA for Department:
+```{r}
+mod <- lm(Y ~ smv+incentive+idle_men+no_of_workers+quarter, garwork)
+anova(mod,update(mod, ~ . +department)) #p=0.002916 
+```
+p- value: `r anova(mod,update(mod, ~ . +department))[2,6]` \
+Hence include the variable in the model.\
+
+ANOVA for Day:
+```{r}
+mod <- lm(Y ~ smv+incentive+idle_men+no_of_workers+quarter+department, garwork)
+anova(mod, update(mod, ~ . +day)) #p=0.5304
+```
+p- value: `r anova(mod,update(mod, ~ . +day))[2,6]` \
+Hence **don't** include the variable in the model.\
+\newpage
+
+ANOVA for Team:
+```{r}
+anova(mod, update(mod, ~ . +team)) #p=2.2E-16 
+```
+p- value: `r anova(mod,update(mod, ~ . +team))[2,6]` \
+Hence include the variable in the model.\
+
+ANOVA for Number of Style Change:
+```{r}
+mod <- lm(Y ~ smv+incentive+idle_men+no_of_workers+quarter+department+team, garwork)
+anova(mod,update(mod, ~ . +no_of_style_change)) #p=6.2E-9 
+```
+p- value: `r anova(mod,update(mod, ~ . +no_of_style_change))[2,6]` \
+Hence include the variable in the model.\
+
+Base Numerical + Categorical Model:
+```{r}
+mod <- lm(Y ~ smv+incentive+idle_men+no_of_workers+quarter+department+team+no_of_style_change, garwork)
+summary(mod) #numerical+categorical model
+cat("\n TOP 10 POSITIVE COEFFICIENTS IN THE MODEL: \n")
+print(head(sort(mod$coefficients,decreasing = TRUE),n=10))
+```
+**R^2^adj = `r round(summary(mod)$adj.r.squared,4)` **\
+R^2^adj has improved in comparison to our optimized Numerical Model.
+\newpage
+  
+  
+  
+## Model 3: Add Interaction Terms
+
+Evaluate whether the 2-way interaction terms are necessary in our model using ANOVA test:
+```{r}
+## Interaction Terms---
+
+#considering only two way interaction terms
+mod.2 <- lm(Y ~ (smv+incentive+idle_men+no_of_workers+quarter+department+team+no_of_style_change)^2, garwork)
+anova(mod,mod.2) #2.2e-16
+```
+p- value: `r anova(mod,mod.2)[2,6]` \
+The p-value from the ANOVA test is way less than 0.05, we can confirm that we need the 2 way interactive terms to explain our model.\
+
+Complete 2-way Model:\
+```{r}
+mod <- lm(Y ~ (smv+incentive+idle_men+no_of_workers+quarter+department+team+no_of_style_change)^2, garwork)
+#summary(mod)
+cat("\n TOP 10 POSITIVE COEFFICIENTS IN THE MODEL \n")
+print(head(sort(mod$coefficients,decreasing = TRUE),n=10))
+```
+
+Repeating the ANOVA test as shown below, we can remove non-significant interaction terms one by one and build our final model.\
+```{r}
+anova(update(mod, ~ . -smv:department),mod) #p=0.009074; consider alpha=0.05
+
+```
+
+
+Interaction Term Model:
+```{r}
+mod <- lm(Y ~ smv + incentive + idle_men + no_of_workers + quarter + department + team + no_of_style_change + smv:no_of_workers + smv:department + incentive:quarter + incentive:department + incentive:team + idle_men:department + no_of_workers:department + no_of_workers:team + quarter:department + quarter:team + quarter:no_of_style_change + department:team + department:no_of_style_change + team:no_of_style_change,garwork)
+summary(mod)
+cat("\n TOP 10 POSITIVE COEFFICIENTS IN THE MODEL: \n")
+print(head(sort(mod$coefficients,decreasing = TRUE),n=10))
+```
+**R^2^adj = `r round(summary(mod)$adj.r.squared,4)` **\
+R^2^adj has improved in comparison to our optimized Numerical+Categorical model.
+\newpage
+  
+  
+# V. Check Assumptions
+
+```{r}
+##Check Assumptions------
+
+#residual and leverage and scale location plots
+cat("STANDARDIZED RESIDUAL PLOT: STYLE CHANGE(COLOR) AND DEPARTMENT(SHAPE)")
+par(mfrow=c(2,2))
+plot(mod, pch=as.numeric(garwork$department), col=as.numeric(garwork$no_of_style_change))
+legend(x = "bottom",title="Department",legend = levels(garwork$department), pch=as.numeric(garwork$department), cex= 0.4, box.lwd = 0.2, ncol = nlevels(garwork$department))
+legend(x = "top",title="Style Change",legend = levels(garwork$no_of_style_change), pch=as.numeric(garwork$no_of_style_change), col=c(1:nlevels(garwork$no_of_style_change)), cex= 0.4, text.col = c(1:nlevels(garwork$quarter)), ncol = nlevels(garwork$quarter))
+
+cat("STANDARDIZED RESIDUAL PLOT: QUARTER(COLOR) AND TEAM(SHAPE)")
+plot(mod, pch=as.numeric(garwork$team), col=as.numeric(garwork$quarter))
+legend(x = "bottom",title="Team",legend = levels(garwork$team), pch=as.numeric(garwork$team), cex= 0.3, box.lwd = 0.2, ncol = nlevels(garwork$team))
+legend(x = "top",title="Quarter",legend = levels(garwork$quarter), pch=as.numeric(garwork$quarter), col=c(1:nlevels(garwork$quarter)), cex= 0.3, text.col = c(1:nlevels(garwork$quarter)), ncol = nlevels(garwork$quarter))
+
+cat("NORMALITY TEST")
+shapiro.test(rstandard(mod))
+
+cat("FITTED RESIDUAL PLOT: STYLE CHANGE(COLOR) AND DEPARTMENT(SHAPE)")
+car::residualPlots(mod, col=as.numeric(garwork$no_of_style_change), pch=as.numeric(garwork$department))
+cat("FITTED RESIDUAL PLOT: QUARTER(COLOR) AND TEAM(SHAPE)")
+car::residualPlots(mod, col=as.numeric(garwork$team), pch=as.numeric(garwork$quarter))
+
+```
+All of the above plots convey the message that our model assumptions are violated with our current model. Lets deep dive into each of them below:\
+  
+  
+  
+## 1. Normality:
+```{r, fig.height = 3, fig.width = 6, fig.align = "center"}
+par(mfrow=c(1,1))
+plot(mod, which=2)
+```
+
+The Q-Q plot shows that the points are highly biased on the negative axis - left skew. The Shapiro-Wilk test confirms with a very low p-value that there is a risk with the assumption of normality. Hence, the assumption of normal distribution is violated with the model. Therefore we will have to address this with proper transformations.
+  
+  
+  
+## 2. Linearity:
+```{r, fig.height = 4, fig.width = 5, fig.align = "center"}
+plot(mod, which=1)
+residualPlots(mod)
+```
+
+The residual-fitted plot should show a straight line or equal distribution of points on top and bottom sides of the line to prove linearity.The plot from the given model shows a bias and hence rejects the assumption of linearity.Looking further, we do observe a quadratic trend in the residual plots for idle_men.Hence, we need these to be fixed with necessary transformations.
+  
+  
+  
+## 3.Homoscedasticity:
+```{r}
+ncvTest(mod)
+```
+
+When the data follows homoscedasticity, we observe equal distribution of points in the residual-fitted and residual-predictor plots.We can also use the Breusch-Pagan test, where the p-value > 0.05 gives us enough proof to agree that the data follows the assumption of homoscedasticity.\
+The residual-fitted values plot show a quadratic trend. The Scale-location plot also can confirm with a strong trend that the assumption of homoscedasticity is invalid. From the above residual-fitted and residual plots for the predictors, we observe an uneven spread of the residuals. Also, the p-value from the Breusch-Pagan test is small thus confirming heteroscedasticity.We should make appropriate transformations to correct them.\
+
+Observing the residual vs fitted values curve, we can state that there is no strong linear relationship in our final model. From the individual residual plots, we come to the same conclusion that there is no variable with strong positive or negative linear relationship. We do have few outliers and hence check their leverage in the new model.\
+  
+  
+  
+## 4.Influential Points:
+```{r, fig.height = 3, fig.width = 6, fig.align = "center"}
+plot(mod, which=4)
+influencePlot(mod)
+```
+Understanding the above residual-Leverage plot and by referring the rule of thumb for Cook’s distance, we can state that we definitely have numerous high influential points. Among them, points 1131,113,1150,692,730,784,930 seems to be the most influential.\
+  
+  
+  
+# VI. Transformations
+  
+  
+  
+## 1. For Influential Points: 
+  
+```{r, fig.height = 3, fig.width = 6, fig.align = "center"}
+##Transformations-----
+#identifying the influential rows and removing them from the dataset
+plot(mod, which=4)
+plot(mod, which=5)
+```
+R^2^adj before transformation = `r round(summary(mod)$adj.r.squared,4)` \
+Based on the plots above, we can discern the data points with high leverage. To assess their impact on our model, we will proceed by removing the data points that exceed three times the mean value of Cook's distance as a critical threshold, using plots for evaluation.
+
+```{r, fig.height = 3, fig.width = 6, fig.align = "center"}
+cooksd <- cooks.distance(mod)
+influential <- which(cooksd > (3 * mean(cooksd, na.rm = TRUE)))
+garwork <- garwork[-influential,]
+Y <- garwork$actual_productivity
+
+mod <- lm(Y ~ smv + incentive + idle_men + no_of_workers + quarter + department + team + no_of_style_change + smv:no_of_workers + smv:department + incentive:quarter + incentive:department + incentive:team + idle_men:department + no_of_workers:department + no_of_workers:team + quarter:department + quarter:team + quarter:no_of_style_change + department:team + department:no_of_style_change + team:no_of_style_change,garwork)
+#summary(mod)
+plot(mod)
+plot(mod, which=4)
+```
+Influential Data Point Row Numbers: **`r influential`** \
+R^2^adj after transformation = `r round(summary(mod)$adj.r.squared,4)` \
+After removing the highly influential data points, we have noted that there is no significant difference in the residual standard error, R^2^, or R^2^adj values. As a result, we can confidently proceed with the reduced number of observations.\
+
+  
+  
+  
+## 2. For Linearity:
+
+Since the residual plots for "idle_men" showed a quadratic trend, we will need to find a transformation to build a model that follows linearity assumption.\
+```{r, fig.height = 4, fig.width = 6, fig.align = "center"}
+#For Linearity:
+modL <- lm(Y~idle_men,garwork)
+invResPlot(modL)
+```
+Based on the invResPlot analysis, we can determine that the appropriate lambda value for this transformation is 0, as "idle_men" contains values of 0, making an inverse transformation unsuitable. Therefore, I will introduce a log term for "idle_men + 1" in my model instead of using the variable itself.
+
+```{r, fig.height = 4, fig.width = 6, fig.align = "center"}
+modL <- update(mod, ~ . -idle_men +log(idle_men+1) -idle_men:department + log(idle_men+1):department)
+plot(modL, which=1)
+residualPlots(modL)
+#summary(modL)
+```
+R^2^adj after transformation = `r round(summary(modL)$adj.r.squared,4)` \
+
+Checking the fitted residual and the residual vs log(idle_men+1) plot after the transformation, we can say that the linearity assumption is invalid for the model. The transformation on idle_men didn’t result in improvement in the R^2^adj levels and hence no transformation was included in the final model. \
+
+We also observe a slight quadratic trend in the residual vs smv plots:
+```{r, fig.height = 4, fig.width = 6, fig.align = "center"}
+mod1 <- lm(Y~smv,garwork)
+invResPlot(mod1)
+```
+Based on the invResPlot, we can say that the appropriate lambda value is 6 for this transformation. Thus I will be introducing a smv^6^ term instead of smv in my model. \
+```{r, fig.height = 3, fig.width = 6, fig.align = "center"}
+modL <- update(mod, ~ . -smv +(smv)^6 - smv:no_of_workers + smv^6:no_of_workers - smv:department + smv^6:no_of_workers)
+plot(modL, which=1)
+residualPlots(modL)
+#summary(modL)
+```
+R^2^adj after transformation = `r round(summary(modL)$adj.r.squared,4)` \
+
+Checking the fitted residual and the residual vs smv^6^ plot after the transformation, we can say that the linearity assumption is still invalid for the model.The transformation on smv didn’t result in improvement in the R^2^adj levels and hence no transformation was included. \
+  
+  
+## 3. For Linearity, Normality and Homoscedasticity:
+Evaluating a transformation on the response variable,\
+Response Variable Y^2^:\
+```{r, fig.align = "center"}
+#For Normality, Homoscedasticity and Linearity:
+mod <- lm((Y)^2 ~ (smv+incentive+idle_men+no_of_workers+quarter+department+team+no_of_style_change)^2 -smv:department -incentive:no_of_workers -incentive:idle_men -incentive:no_of_style_change -idle_men:no_of_workers -smv:incentive -smv:idle_men -smv:quarter -smv:team -smv:no_of_style_change -quarter:department -department:no_of_style_change -quarter:no_of_style_change -no_of_workers:no_of_style_change -idle_men:no_of_style_change -idle_men:team -idle_men:department -idle_men:quarter,garwork)
+summary(mod)
+plot(mod, which=1)
+residualPlots(mod)
+```
+R^2^adj after transformation = `r round(summary(mod)$adj.r.squared,4)` \
+
+The residual-fitted plot exhibits a straight line or equal distribution of points, providing evidence that the linearity assumption holds true in the model.\
+
+```{r}
+par(mfrow=c(2,2))
+plot(mod)
+shapiro.test(rstandard(mod))
+```
+
+Both the plots and the p-value obtained from the Shapiro-Wilk tests confirm that the assumption of normality is still not met in the model\
+```{r}
+ncvTest(mod)
+```
+
+The residual-fitted values plot indicates no discernible trend, while the Scale-location plot demonstrates a significant trend, rendering the assumption of homoscedasticity invalid. However, upon conducting the Breusch-Pagan test, we obtain a p-value greater than 0.05, confirming the presence of homoscedasticity in the model.\
+\newpage
+  
+  
+  
+# VII. Final Model
+```{r, fig.height = 4, fig.width = 6, fig.align = "center"}
+##Final Model -------------------------------------------------------------
+
+mod <- lm((Y)^2 ~ (smv+incentive+idle_men+no_of_workers+quarter+department+team+no_of_style_change)^2 -smv:department -incentive:no_of_workers -incentive:idle_men -incentive:no_of_style_change -idle_men:no_of_workers -smv:incentive -smv:idle_men -smv:quarter -smv:team -smv:no_of_style_change -quarter:department -department:no_of_style_change -quarter:no_of_style_change -no_of_workers:no_of_style_change -idle_men:no_of_style_change -idle_men:team -idle_men:department -idle_men:quarter,garwork)
+summary(mod)
+cat("\n TOP 10 POSITIVE COEFFICIENTS IN THE MODEL: \n")
+print(head(sort(mod$coefficients,decreasing = TRUE),n=10))
+plot(mod)
+residualPlots(mod)
+
+ncvTest(mod)
+```
+
+## 1. Hypothesis Test 1
+Coefficient of smv = 0,i.e. the time allocated for each team doesn't affect the actual productivity.\
+This hypothesis will be helpful for allocating time for tasks and teams:
+  
+  
+* If we find that the productivity is not related to the time allocated to the team we can conclude that the time provided to each team is optimum for maximum actual productivity. \
+* If we can't reject the null hypothesis, their is a high probability that the time provided needs to be optimized for achieving higher efficiency.\
+
+```{r}
+# Hypothesis Test 1
+# B_smv=0,i.e. smv doesn't affect the actual productivity
+mod2 <- update(mod, ~. -smv)
+anova(mod2,mod) #p-value 0.1774
+```
+
+p-value = `r anova(mod2,mod)[2,6]` \
+We don’t have enough proof to reject H0.Thus it is very likely that the standard time allocated for a task(in minutes) might not have impact on the actual productivity among the teams. \
+
+## 2. Hypothesis Test 2
+Coefficient for "no_of_workers" = 0.05; i.e. number of workers affect the actual productivity by 5%.
+
+This hypothesis will be helpful as we can find if we can increase actual productivity by 5% by increasing the number of workers.\
+
+```{r}
+# Hypothesis Test 2
+# B_no_of_workers = 0.05; i.e. number of workers affect the actual productivity by 5%
+mod2 <- update(mod, ~. -no_of_workers + offset(I(0.05*no_of_workers)))
+anova(mod2,mod) #p-value 2.2e-16
+```
+p-value = `r anova(mod2,mod)[2,6]` \
+
+We have enough proof to reject H0. \
+Thus it is very unlikely to increase productivity by 5% by increasing the number of workers. \
